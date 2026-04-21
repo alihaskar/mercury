@@ -104,6 +104,7 @@ namespace Mercury {
         void handleBookMutation(const BookMutation& mutation);
         void handleTrade(const Trade& trade);
         void handlePnL(const PnLSnapshot& snapshot);
+        void handleExecution(const ExecutionResult& result);
         void publishStats();
         L2Snapshot buildSnapshot(size_t depth) const;
         uint64_t nextSequence() { return ++currentSequence_; }

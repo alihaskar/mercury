@@ -20,6 +20,7 @@ export function TopBar() {
   const symbol = useMarketDataStore((state) => state.symbol)
   const connection = useMarketDataStore((state) => state.connectionState)
   const stats = useMarketDataStore((state) => state.stats)
+  const simulation = useMarketDataStore((state) => state.simulation)
   const now = useClock()
 
   const mid = stats?.midPrice ?? null
@@ -59,6 +60,11 @@ export function TopBar() {
         <Badge tone={connTone} dot>
           {connection}
         </Badge>
+        {simulation?.enabled ? (
+          <Badge tone={simulation.paused ? 'warn' : 'live'}>
+            sim {simulation.paused ? 'paused' : simulation.volatility}
+          </Badge>
+        ) : null}
         <span className="num text-[11px] text-[color:var(--color-text-secondary)]">
           {formatClock(now)}
         </span>

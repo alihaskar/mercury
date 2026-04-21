@@ -1,5 +1,7 @@
 #pragma once
 
+#include "MarketRuntime.h"
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -14,6 +16,7 @@ namespace Mercury {
         bool replayLoop = false;
         uint64_t replayLoopPauseMs = 1000;
         std::string symbol = "SIM";
+        SimulationConfig simulation;
     };
 
     int runServer(const ServerOptions& options);

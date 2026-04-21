@@ -4,6 +4,7 @@ export function StatusBar() {
   const stats = useMarketDataStore((state) => state.stats)
   const connection = useMarketDataStore((state) => state.connectionState)
   const activeClientId = useMarketDataStore((state) => state.activeClientId)
+  const simulation = useMarketDataStore((state) => state.simulation)
 
   return (
     <footer className="flex items-center justify-between gap-4 border-t border-[color:var(--color-border-subtle)] bg-[color:var(--color-bg-panel)] px-3 py-1 text-[10.5px] uppercase tracking-wider text-[color:var(--color-text-muted)]">
@@ -26,6 +27,11 @@ export function StatusBar() {
         <span>
           Ask lvls <span className="num text-[color:var(--color-text-secondary)]">{stats?.askLevels ?? 0}</span>
         </span>
+        {simulation?.enabled ? (
+          <span>
+            Sim t <span className="num text-[color:var(--color-text-secondary)]">{simulation.simulationTimestamp}</span>
+          </span>
+        ) : null}
       </div>
       <div className="flex items-center gap-4">
         <span>Local (UTC{getUtcOffset()})</span>

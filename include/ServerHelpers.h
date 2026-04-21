@@ -1,7 +1,7 @@
 #pragma once
 
-#include "EngineService.h"
 #include "MarketData.h"
+#include "MarketRuntime.h"
 #include "Order.h"
 
 #include <App.h>
@@ -170,7 +170,7 @@ namespace Mercury {
             };
         }
 
-        inline json stateToJson(const EngineState& state, uint64_t connections) {
+        inline json stateToJson(const MarketRuntimeState& state, uint64_t connections) {
             return json{
                 {"running", state.running},
                 {"replayActive", state.replayActive},
@@ -183,15 +183,48 @@ namespace Mercury {
                 {"bidLevels", state.bidLevels},
                 {"askLevels", state.askLevels},
                 {"clientCount", state.clientCount},
-                {"connections", connections}
+                {"connections", connections},
+                {"simulation", {
+                    {"enabled", state.simulationEnabled},
+                    {"running", state.simulationRunning},
+                    {"paused", state.simulationPaused},
+                    {"clockMode", state.clockMode},
+                    {"speed", state.simulationSpeed},
+                    {"volatility", state.volatilityPreset},
+                    {"simulationTimestamp", state.simulationTimestamp},
+                    {"marketMakerCount", state.marketMakerCount},
+                    {"momentumCount", state.momentumCount},
+                    {"meanReversionCount", state.meanReversionCount},
+                    {"realizedVolatilityBps", state.realizedVolatilityBps},
+                    {"averageSpread", state.averageSpread}
+                }}
             };
+        }
+
+        inline std::string simStateEnvelope(const SimulationStateEvent& state) {
+            json payload{
+                {"enabled", state.enabled},
+                {"running", state.running},
+                {"paused", state.paused},
+                {"clockMode", state.clockMode},
+                {"speed", state.speed},
+                {"volatility", state.volatility},
+                {"simulationTimestamp", state.simulationTimestamp},
+                {"marketMakerCount", state.marketMakerCount},
+                {"momentumCount", state.momentumCount},
+                {"meanReversionCount", state.meanReversionCount},
+                {"realizedVolatilityBps", state.realizedVolatilityBps},
+                {"averageSpread", state.averageSpread}
+            };
+            return envelopeToJson("sim_state", state.sequence, state.symbol, std::move(payload)).dump();
         }
 
         // ----------------------------------------------------------------
         // Order parsing from JSON request body
         // ----------------------------------------------------------------
 
-        inline Order parseOrderFromJson(const json& body, EngineService& engineService) {
+        template <typename IdSource>
+        inline Order parseOrderFromJson(const json& body, IdSource& idSource) {
             Order order;
             const auto orderType = parseOrderType(body.value("type", std::string("limit")));
             order.orderType = orderType;
@@ -207,7 +240,7 @@ namespace Mercury {
             if (orderType == OrderType::Modify) {
                 order.id = body.value("id", 0ULL);
                 if (order.id == 0) {
-                    order.id = engineService.allocateOrderId();
+                    order.id = idSource.allocateOrderId();
                 }
                 order.targetOrderId = body.value("orderId", 0ULL);
                 order.newPrice = body.value("newPrice", 0LL);
@@ -218,7 +251,7 @@ namespace Mercury {
 
             order.id = body.value("id", body.value("orderId", 0ULL));
             if (order.id == 0) {
-                order.id = engineService.allocateOrderId();
+                order.id = idSource.allocateOrderId();
             }
             order.side = parseSide(body.value("side", std::string("buy")));
             order.price = body.value("price", 0LL);

@@ -65,6 +65,30 @@ export interface PnLPayload {
   timestamp: number
 }
 
+export interface SimulationStatePayload {
+  enabled: boolean
+  running: boolean
+  paused: boolean
+  clockMode: 'realtime' | 'accelerated' | string
+  speed: number
+  volatility: 'low' | 'normal' | 'high' | string
+  simulationTimestamp: number
+  marketMakerCount: number
+  momentumCount: number
+  meanReversionCount: number
+  realizedVolatilityBps: number
+  averageSpread: number
+}
+
+export interface ExecutionPayload {
+  orderId: number
+  status: string
+  rejectReason: string
+  filledQuantity: number
+  remainingQuantity: number
+  timestamp: number
+}
+
 export type MarketEnvelope =
   | {
       type: 'snapshot'
@@ -95,6 +119,18 @@ export type MarketEnvelope =
       sequence: number
       symbol: string
       payload: PnLPayload
+    }
+  | {
+      type: 'execution'
+      sequence: number
+      symbol: string
+      payload: ExecutionPayload
+    }
+  | {
+      type: 'sim_state'
+      sequence: number
+      symbol: string
+      payload: SimulationStatePayload
     }
 
 export interface ExecutionTrade {

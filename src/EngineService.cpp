@@ -33,6 +33,10 @@ namespace Mercury {
             handleTrade(trade);
         });
 
+        engine_.setExecutionCallback([this](const ExecutionResult& result) {
+            handleExecution(result);
+        });
+
         pnlTracker_.setPnLCallback([this](const PnLSnapshot& snapshot) {
             handlePnL(snapshot);
         });
@@ -303,6 +307,24 @@ namespace Mercury {
         std::lock_guard<std::mutex> lock(sinkMutex_);
         if (sink_) {
             sink_->onPnLEvent(event);
+        }
+    }
+
+    void EngineService::handleExecution(const ExecutionResult& result) {
+        ExecutionEvent event;
+        event.sequence = nextSequence();
+        event.symbol = symbol_;
+        event.orderId = result.orderId;
+        event.status = result.status;
+        event.rejectReason = result.rejectReason;
+        event.filledQuantity = result.filledQuantity;
+        event.remainingQuantity = result.remainingQuantity;
+        event.timestamp = wallTimestampMillis();
+        ++messageCount_;
+
+        std::lock_guard<std::mutex> lock(sinkMutex_);
+        if (sink_) {
+            sink_->onExecutionEvent(event);
         }
     }
 

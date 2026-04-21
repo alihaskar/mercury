@@ -12,8 +12,8 @@ namespace Mercury {
 
     using json = nlohmann::json;
 
-    OrderEntryGateway::OrderEntryGateway(EngineService& engine)
-        : engine_(engine) {}
+    OrderEntryGateway::OrderEntryGateway(MarketRuntime& runtime)
+        : runtime_(runtime) {}
 
     void OrderEntryGateway::attach(uWS::App& app) {
         app.post("/api/orders", [this](auto* res, auto* /*req*/) {
@@ -43,13 +43,13 @@ namespace Mercury {
                                           const std::string& body) {
         try {
             const auto parsed = json::parse(body);
-            Order order = helpers::parseOrderFromJson(parsed, engine_);
+            Order order = helpers::parseOrderFromJson(parsed, runtime_);
 
             auto entryNs = static_cast<uint64_t>(
                 std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::steady_clock::now().time_since_epoch()).count());
 
-            ExecutionResult result = engine_.submitOrder(order, entryNs);
+            ExecutionResult result = runtime_.submitOrder(order, entryNs);
             helpers::writeJson(res, "200 OK",
                                helpers::executionResultToJson(order, result));
         } catch (const std::exception& ex) {
@@ -61,4 +61,3 @@ namespace Mercury {
     }
 
 }
-

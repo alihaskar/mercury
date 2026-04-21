@@ -11,6 +11,7 @@ describe('market data store', () => {
       asks: [],
       trades: [],
       stats: null,
+      simulation: null,
       pnlByClient: {},
       chartPoints: [],
       activeClientId: 1,
@@ -80,5 +81,30 @@ describe('market data store', () => {
     })
 
     expect(needsResync).toBe(true)
+  })
+
+  it('applies simulation state without forcing resync', () => {
+    const needsResync = useMarketDataStore.getState().applyEnvelope({
+      type: 'sim_state',
+      sequence: 3,
+      symbol: 'SIM',
+      payload: {
+        enabled: true,
+        running: true,
+        paused: false,
+        clockMode: 'accelerated',
+        speed: 10,
+        volatility: 'high',
+        simulationTimestamp: 5000,
+        marketMakerCount: 2,
+        momentumCount: 3,
+        meanReversionCount: 1,
+        realizedVolatilityBps: 42.5,
+        averageSpread: 5.5,
+      },
+    })
+
+    expect(needsResync).toBe(false)
+    expect(useMarketDataStore.getState().simulation?.volatility).toBe('high')
   })
 })

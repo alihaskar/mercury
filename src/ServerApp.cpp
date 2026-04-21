@@ -1,7 +1,5 @@
 #include "ServerApp.h"
 
-#include "EngineService.h"
-#include "MarketData.h"
 #include "MarketDataPublisher.h"
 #include "OrderEntryGateway.h"
 #include "ServerHelpers.h"
@@ -36,26 +34,46 @@ namespace Mercury {
     }
 
     int runServer(const ServerOptions& options) {
-        EngineService engineService(options.symbol);
+        MarketRuntime runtime(options.symbol, options.simulation);
         MarketDataPublisher publisher;
-        OrderEntryGateway gateway(engineService);
+        OrderEntryGateway gateway(runtime);
 
-        engineService.setMarketDataSink(&publisher);
-        engineService.start();
+        runtime.addSubscriber(&publisher);
+        runtime.start();
 
-        if (options.replayFile && !engineService.startReplay(*options.replayFile, options.replaySpeed,
-                                                             options.replayLoop, options.replayLoopPauseMs)) {
+        if (options.replayFile && !runtime.startReplay(*options.replayFile, options.replaySpeed,
+                                                       options.replayLoop, options.replayLoopPauseMs)) {
             std::cerr << "Failed to start replay from " << *options.replayFile << "\n";
-            engineService.stop();
+            runtime.stop();
             return 1;
         }
 
         uWS::App app;
         bool listening = false;
 
-        auto sendSnapshot = [&engineService](auto* ws, size_t depth) {
-            auto snapshot = engineService.getSnapshot(depth);
+        auto sendSnapshot = [&runtime](auto* ws, size_t depth) {
+            auto snapshot = runtime.getSnapshot(depth);
             ws->send(snapshotEnvelope(snapshot), uWS::OpCode::TEXT);
+        };
+
+        auto sendSimulationState = [&runtime](auto* ws) {
+            auto state = runtime.getState();
+            SimulationStateEvent event;
+            event.sequence = state.sequence;
+            event.symbol = state.symbol;
+            event.enabled = state.simulationEnabled;
+            event.running = state.simulationRunning;
+            event.paused = state.simulationPaused;
+            event.clockMode = state.clockMode;
+            event.speed = state.simulationSpeed;
+            event.volatility = state.volatilityPreset;
+            event.simulationTimestamp = state.simulationTimestamp;
+            event.marketMakerCount = state.marketMakerCount;
+            event.momentumCount = state.momentumCount;
+            event.meanReversionCount = state.meanReversionCount;
+            event.realizedVolatilityBps = state.realizedVolatilityBps;
+            event.averageSpread = state.averageSpread;
+            ws->send(simStateEnvelope(event), uWS::OpCode::TEXT);
         };
 
         app.options("/*", [](auto* res, auto* /*req*/) {
@@ -64,19 +82,62 @@ namespace Mercury {
             res->end("");
         });
 
-        app.get("/api/health", [&engineService](auto* res, auto* /*req*/) {
+        app.get("/api/health", [&runtime](auto* res, auto* /*req*/) {
+            const auto state = runtime.getState();
             writeJson(res, "200 OK", json{
                 {"status", "ok"},
-                {"running", engineService.isRunning()},
-                {"replayActive", engineService.isReplayActive()}
+                {"running", runtime.isRunning()},
+                {"replayActive", runtime.isReplayActive()},
+                {"simulationEnabled", state.simulationEnabled},
+                {"simulationPaused", state.simulationPaused}
             });
         });
 
-        app.get("/api/state", [&engineService, &publisher](auto* res, auto* /*req*/) {
-            writeJson(res, "200 OK", stateToJson(engineService.getState(), publisher.connectionCount()));
+        app.get("/api/state", [&runtime, &publisher](auto* res, auto* /*req*/) {
+            writeJson(res, "200 OK", stateToJson(runtime.getState(), publisher.connectionCount()));
         });
 
         gateway.attach(app);
+
+        app.post("/api/simulation/control", [&runtime](auto* res, auto* /*req*/) {
+            auto body = std::make_shared<std::string>();
+
+            res->onAborted([body]() {
+                (void) body;
+            });
+
+            res->onData([body, res, &runtime](std::string_view chunk, bool isLast) {
+                body->append(chunk.data(), chunk.size());
+                if (!isLast) {
+                    return;
+                }
+
+                try {
+                    const auto parsed = json::parse(*body);
+                    SimulationControl control;
+                    control.action = parsed.value("action", std::string());
+                    control.volatility = parsed.value("volatility", std::string("normal"));
+
+                    if (!runtime.applyControl(control)) {
+                        writeJson(res, "400 Bad Request", json{
+                            {"error", "invalid_control"},
+                            {"message", "Unsupported simulation control action"}
+                        });
+                        return;
+                    }
+
+                    writeJson(res, "200 OK", json{
+                        {"status", "ok"},
+                        {"simulation", stateToJson(runtime.getState(), 0)["simulation"]}
+                    });
+                } catch (const std::exception& ex) {
+                    writeJson(res, "400 Bad Request", json{
+                        {"error", "invalid_request"},
+                        {"message", ex.what()}
+                    });
+                }
+            });
+        });
 
         app.ws<PerSocketData>("/ws/market", {
             .compression = uWS::DISABLED,
@@ -86,11 +147,12 @@ namespace Mercury {
             .closeOnBackpressureLimit = false,
             .resetIdleTimeoutOnSend = false,
             .sendPingsAutomatically = true,
-            .open = [&publisher, &sendSnapshot](auto* ws) {
+            .open = [&publisher, &sendSnapshot, &sendSimulationState](auto* ws) {
                 ws->subscribe(MarketDataPublisher::TOPIC);
                 ws->getUserData()->depth = DEFAULT_L2_DEPTH;
                 publisher.incrementConnections();
                 sendSnapshot(ws, DEFAULT_L2_DEPTH);
+                sendSimulationState(ws);
             },
             .message = [&sendSnapshot](auto* ws, std::string_view message, uWS::OpCode /*opCode*/) {
                 try {
@@ -143,15 +205,16 @@ namespace Mercury {
 
         if (!listening) {
             std::cerr << "Failed to bind server to " << options.host << ":" << options.port << "\n";
-            engineService.stop();
+            runtime.stop();
             return 1;
         }
 
         app.run();
 
         publisher.detach();
-        engineService.stopReplay();
-        engineService.stop();
+        runtime.removeSubscriber(&publisher);
+        runtime.stopReplay();
+        runtime.stop();
         return 0;
     }
 

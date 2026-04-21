@@ -1,6 +1,6 @@
 #pragma once
 
-#include "EngineService.h"
+#include "MarketRuntime.h"
 
 #include <App.h>
 
@@ -20,7 +20,7 @@ namespace Mercury {
     //     to serialize onto the engine thread and return the result.
     class OrderEntryGateway {
     public:
-        explicit OrderEntryGateway(EngineService& engine);
+        explicit OrderEntryGateway(MarketRuntime& runtime);
         ~OrderEntryGateway() = default;
 
         OrderEntryGateway(const OrderEntryGateway&) = delete;
@@ -31,7 +31,7 @@ namespace Mercury {
         void attach(uWS::App& app);
 
     private:
-        EngineService& engine_;
+        MarketRuntime& runtime_;
 
         // Called when the full request body has arrived.
         template <bool SSL>

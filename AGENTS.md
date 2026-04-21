@@ -15,7 +15,7 @@ Mercury is now a mixed C++ and TypeScript repository.
 
 Current backend outputs:
 
-- `mercury`: demo, file-processing, replay, and localhost server executable
+- `mercury`: demo, file-processing, unified simulation, headless, replay, and localhost server executable
 - `mercury_lib`: core library used by tests and benchmarks
 - `mercury_tests`: Google Test suite
 - `mercury_benchmarks`: optional Google Benchmark target
@@ -26,10 +26,10 @@ Current frontend app:
 
 Primary code areas:
 
-- `include/`: core headers, market-data DTOs, engine-service, server interfaces, binary protocol
-- `src/`: matching engine, service layer, server runtime, order-entry gateway, publisher, CLI entry point
+- `include/`: core headers, market-data DTOs, market-runtime, engine-service, server interfaces, binary protocol
+- `src/`: matching engine, service layer, unified runtime, server runtime, order-entry gateway, publisher, CLI entry point
 - `tests/`: backend correctness and sequencing coverage
-- `frontend/src/`: browser UI, Zustand store, WebSocket handling, order entry, system health
+- `frontend/src/`: browser UI, Zustand store, WebSocket handling, order entry, simulation controls, system health
 - `docs/`: architecture and workflow docs
 
 Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/WORKFLOWS.md](docs/WORKFLOWS.md) before making large changes.
@@ -50,13 +50,15 @@ Do not assume an older README claim still matches the build. Verify it in code.
 ## Architecture Constraints To Preserve
 
 - `MatchingEngine` remains the single-book core.
+- `MarketRuntime` owns replay, agents, environment state, and simulation-thread orchestration.
 - `EngineService` owns live engine mutation on a dedicated engine thread.
-- `OrderEntryGateway` handles HTTP order parsing and delegates synchronously to `EngineService`.
+- `OrderEntryGateway` handles HTTP order parsing and delegates synchronously to `MarketRuntime`.
 - WebSocket threads do not read the order book directly.
 - Market-data snapshots and deltas are produced on the engine thread after mutation.
 - WebSocket publishing is deferred onto the uWebSockets loop.
 - Telemetry (latency, MPS) is computed on the engine thread using out-of-band state, not by modifying `Order`.
 - Symbol support is API-level only in v1. Do not push symbol into core order types unless the task explicitly requires that broader refactor.
+- Volatility presets should change participation, spread, and short-term noise without causing runaway price drift over a few seconds.
 
 ## Working Rules For Agents
 
@@ -64,10 +66,12 @@ Do not assume an older README claim still matches the build. Verify it in code.
 - For behavioral changes, update tests in the same pass.
 - Keep changes narrow. Avoid speculative framework work.
 - Do not hand-edit generated directories such as `build/`, `build/_deps/`, `frontend/dist/`, or `frontend/node_modules/`.
-- Treat `src/MatchingEngine.cpp`, `include/OrderBook.h`, `src/EngineService.cpp`, and `src/ServerApp.cpp` as correctness-sensitive.
+- Treat `src/MatchingEngine.cpp`, `include/OrderBook.h`, `src/MarketRuntime.cpp`, `src/EngineService.cpp`, and `src/ServerApp.cpp` as correctness-sensitive.
+- Treat simulation parameter changes as behavior changes that require regression coverage, not just visual spot checks.
 - Keep market-data envelopes stable unless the task is explicitly an API-version change.
 - If you change HTTP or WebSocket payloads, update both docs and frontend store handling in the same pass.
 - If you change CLI flags or runtime modes, update `README.md`, `docs/ARCHITECTURE.md`, and `docs/WORKFLOWS.md`.
+- Preserve the current `README.md` showcase style: keep the header image, quote-style intro, richer section layout, and polished formatting unless the user explicitly asks for a different presentation.
 
 ## Change Priorities
 
@@ -118,7 +122,7 @@ npm run build
 Backend:
 
 ```powershell
-.\build\mercury.exe --server --host 127.0.0.1 --port 9001 --symbol SIM
+.\build\mercury.exe --server --sim --host 127.0.0.1 --port 9001 --symbol SIM
 ```
 
 Frontend:
@@ -143,11 +147,13 @@ See [docs/WORKFLOWS.md](docs/WORKFLOWS.md) for concrete checklists.
 
 - `include/OrderBook.h`: resting-order ownership, lookup consistency, price-level maintenance
 - `src/MatchingEngine.cpp`: matching semantics, TIF behavior, callbacks, modify/cancel logic
-- `src/EngineService.cpp`: engine-thread serialization, sequencing, replay, stats/PnL/telemetry publication
+- `src/MarketRuntime.cpp`: simulation-thread scheduling, agent behavior, runtime fanout, control-state transitions
+- `src/MarketRuntime.cpp`: volatility tuning, fair-value evolution, and burst dynamics can easily create unrealistic price paths
+- `src/EngineService.cpp`: engine-thread serialization, sequencing, stats/PnL/telemetry publication
 - `src/OrderEntryGateway.cpp`: request parsing, latency stamping, synchronous engine roundtrip
 - `src/ServerApp.cpp`: HTTP/WS route registration, JSON and binary WebSocket lifecycle, publish handoff
 - `src/MarketDataPublisher.cpp`: JSON and binary serialization, topic routing
-- `frontend/src/store/market-data-store.ts`: sequence handling, telemetry tracking, and state application
+- `frontend/src/store/market-data-store.ts`: sequence handling, telemetry tracking, simulation-state handling, and state application
 - `frontend/src/hooks/use-market-data-websocket.ts`: reconnect and resync behavior
 
 ## Documentation Maintenance Rule
@@ -167,3 +173,8 @@ At minimum, keep these files in sync:
 - `docs/ARCHITECTURE.md`
 - `docs/WORKFLOWS.md`
 - `README.md` when user-facing behavior changes
+
+README-specific style rule:
+
+- keep the README in its richer showcase format rather than flattening it into a minimal plain-text engineering document
+- preserve the top image and high-signal presentation structure unless the user asks for a redesign

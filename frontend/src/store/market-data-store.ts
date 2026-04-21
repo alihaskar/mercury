@@ -5,6 +5,7 @@ import type {
   MarketEnvelope,
   OrderResponse,
   PnLPayload,
+  SimulationStatePayload,
   StatsPayload,
   TradePayload,
 } from '../lib/types'
@@ -25,6 +26,7 @@ interface MarketDataState {
   asks: BookLevel[]
   trades: TradePayload[]
   stats: StatsPayload | null
+  simulation: SimulationStatePayload | null
   pnlByClient: Record<number, PnLPayload>
   chartPoints: ChartPoint[]
   activeClientId: number
@@ -57,6 +59,7 @@ export const useMarketDataStore = create<MarketDataState>((set, get) => ({
   asks: [],
   trades: [],
   stats: null,
+  simulation: null,
   pnlByClient: {},
   chartPoints: [],
   activeClientId: 1,
@@ -78,7 +81,7 @@ export const useMarketDataStore = create<MarketDataState>((set, get) => ({
   applyEnvelope: (envelope) => {
     const currentSequence = get().sequence
 
-    if (envelope.type !== 'snapshot' && currentSequence !== 0 && envelope.sequence > currentSequence + 1) {
+    if (envelope.type !== 'snapshot' && envelope.type !== 'sim_state' && currentSequence !== 0 && envelope.sequence > currentSequence + 1) {
       return true
     }
 
@@ -171,6 +174,21 @@ export const useMarketDataStore = create<MarketDataState>((set, get) => ({
           stats: envelope.payload,
           chartPoints: nextPoints,
           messagesPerSecond: envelope.payload.messagesPerSecond ?? state.messagesPerSecond,
+        }
+      }
+
+      if (envelope.type === 'sim_state') {
+        return {
+          symbol: envelope.symbol,
+          sequence: Math.max(state.sequence, envelope.sequence),
+          simulation: envelope.payload,
+        }
+      }
+
+      if (envelope.type === 'execution') {
+        return {
+          symbol: envelope.symbol,
+          sequence: envelope.sequence,
         }
       }
 

@@ -22,19 +22,20 @@ Required checks:
 - remaining quantity reporting
 - cancel and modify semantics
 - IOC and FOK behavior
-- trade callback side effects
+- trade and execution callback side effects
 
 Minimum validation:
 
 - `ctest --test-dir build --output-on-failure`
 - or targeted `mercury_tests --gtest_filter=MatchingEngineTest.*` if you are working directly with the test binary
 
-## 2. Changing Market Data, Server, Or Replay
+## 2. Changing Market Runtime, Server, Or Replay
 
-Use this path for `EngineService`, `ServerApp`, snapshots, deltas, sequence handling, or replay flow.
+Use this path for `MarketRuntime`, `EngineService`, `ServerApp`, snapshots, deltas, sequence handling, simulation controls, or replay flow.
 
 Read first:
 
+- `include/MarketRuntime.h`
 - `include/MarketData.h`
 - `include/EngineService.h`
 - `include/ServerApp.h`
@@ -42,23 +43,28 @@ Read first:
 - `include/MarketDataPublisher.h`
 - `include/BinaryProtocol.h`
 - `include/ServerHelpers.h`
+- `src/MarketRuntime.cpp`
 - `src/EngineService.cpp`
 - `src/ServerApp.cpp`
 - `src/OrderEntryGateway.cpp`
 - `src/MarketDataPublisher.cpp`
 - `tests/market_data_test.cpp`
+- `tests/simulation_runtime_test.cpp`
 - `frontend/src/store/market-data-store.ts`
 
 Required checks:
 
+- all order sources still route through `MarketRuntime`
 - all mutations still route through the engine thread
 - WebSocket code still does not read the order book directly
 - sequence numbers remain monotonic across mixed event types
 - snapshot depth remains clamped to `1..100`
-- replay and HTTP orders still feed the same engine path
+- replay and HTTP orders still feed the same runtime path
+- simulation controls and runtime-state reporting stay aligned with backend behavior
 - frontend store still understands the emitted envelope shape
 - telemetry fields (`engineLatencyNs`, `messagesPerSecond`) are populated correctly
 - both JSON (`/ws/market`) and binary (`/ws/market/bin`) paths publish consistently
+- volatility preset changes still produce believable market behavior rather than runaway multi-second price drift
 
 Minimum validation:
 
@@ -70,17 +76,21 @@ npm run test:run
 
 Recommended manual smoke test:
 
-1. Start the server with `.\build\mercury.exe --server --port 9001`.
+1. Start the server with `.\build\mercury.exe --server --sim --port 9001`.
 2. Start the frontend with `npm run dev` inside `frontend/`.
-3. Submit a buy and sell order from the browser or with `POST /api/orders`.
-4. Confirm the ladder, trade tape, stats, PnL, and system health card update.
-5. Confirm self-trade highlighting appears in the trade tape ("You" badge).
-6. Refresh the browser and confirm the UI resyncs from a fresh snapshot.
-7. Optionally connect a raw WebSocket client to `/ws/market/bin` and verify binary frames arrive.
+3. Confirm the ladder and trade tape are active before any manual order is submitted.
+4. Submit a buy or sell order from the browser or with `POST /api/orders`.
+5. Confirm the ladder, trade tape, stats, simulation controls, PnL, and system health card update.
+6. Call `POST /api/simulation/control` with `pause`, `resume`, and `set_volatility` and confirm the UI changes.
+7. Confirm self-trade highlighting appears in the trade tape.
+8. Refresh the browser and confirm the UI resyncs from a fresh snapshot.
+9. Optionally connect a raw WebSocket client to `/ws/market/bin` and verify binary frames arrive.
+10. Optionally run `.\build\mercury.exe --sim --headless --sim-seed 42 --sim-speed 25 --sim-duration-ms 30000` twice and compare summary output.
+11. When changing simulation dynamics, sample `GET /api/state` over a few intervals at `normal` and `high` volatility and confirm spreads and activity increase without 100% to 1000% price jumps over a few seconds.
 
 ## 3. Changing Frontend Dashboard Behavior
 
-Use this path for layout, store logic, order entry, or WebSocket handling.
+Use this path for layout, store logic, order entry, operator controls, or WebSocket handling.
 
 Read first:
 
@@ -95,6 +105,7 @@ Rules:
 
 - preserve the current backend contract unless the task explicitly changes it
 - keep sequence-gap handling explicit
+- keep simulation status and operator controls consistent with `sim_state`
 - prefer simple fixed-view rendering for the ladder over table abstractions
 - keep the UI localhost-development oriented; production serving is not in scope
 
@@ -156,13 +167,19 @@ ctest --test-dir build --output-on-failure
 ### Run Backend Server
 
 ```powershell
-.\build\mercury.exe --server --host 127.0.0.1 --port 9001 --symbol SIM
+.\build\mercury.exe --server --sim --host 127.0.0.1 --port 9001 --symbol SIM
 ```
 
 ### Run Backend Server With Replay
 
 ```powershell
-.\build\mercury.exe --server --host 127.0.0.1 --port 9001 --symbol SIM --replay data\sample_orders_with_clients.csv --replay-speed 10
+.\build\mercury.exe --server --sim --host 127.0.0.1 --port 9001 --symbol SIM --replay data\sample_orders_with_clients.csv --replay-speed 10
+```
+
+### Run Headless Simulation
+
+```powershell
+.\build\mercury.exe --sim --headless --sim-speed 25 --sim-seed 42 --sim-duration-ms 30000 --sim-volatility normal
 ```
 
 ### Run Frontend
@@ -205,12 +222,24 @@ Invoke-RestMethod `
   -Body '{"type":"limit","side":"buy","price":101,"quantity":10,"clientId":1,"tif":"GTC"}'
 ```
 
+Simulation control:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:9001/api/simulation/control `
+  -ContentType "application/json" `
+  -Body '{"action":"set_volatility","volatility":"high"}'
+```
+
 ## 7. Practical Review Checklist
 
 Before finishing a change, confirm:
 
 - the modified behavior is covered by a backend or frontend test
 - sequence handling still makes sense for reconnect and resync paths
+- manual orders, replay, and simulated agents still converge on the same runtime path
 - HTTP and WebSocket contracts are still documented correctly
 - docs do not overstate unsupported production features
 - no change silently expanded scope from a targeted fix into a broad refactor
+- volatility tuning changes are backed by deterministic tests, not only by visual inspection in the browser

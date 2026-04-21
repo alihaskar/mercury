@@ -47,6 +47,8 @@ namespace Mercury {
         void onTradeEvent(const TradeEvent& trade) override;
         void onStatsEvent(const StatsEvent& stats) override;
         void onPnLEvent(const PnLEvent& pnl) override;
+        void onExecutionEvent(const ExecutionEvent& execution) override;
+        void onSimulationState(const SimulationStateEvent& state) override;
 
     private:
         void broadcast(std::string message);

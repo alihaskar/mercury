@@ -1,5 +1,6 @@
 #include "MarketDataPublisher.h"
 #include "BinaryProtocol.h"
+#include "ServerHelpers.h"
 
 #include <nlohmann/json.hpp>
 #include <string>
@@ -111,6 +112,22 @@ namespace Mercury {
             {"timestamp", pnl.timestamp}
         };
         broadcast(envelopeToJson("pnl", pnl.sequence, pnl.symbol, std::move(payload)).dump());
+    }
+
+    void MarketDataPublisher::onExecutionEvent(const ExecutionEvent& execution) {
+        json payload{
+            {"orderId", execution.orderId},
+            {"status", helpers::executionStatusToLowerString(execution.status)},
+            {"rejectReason", rejectReasonToString(execution.rejectReason)},
+            {"filledQuantity", execution.filledQuantity},
+            {"remainingQuantity", execution.remainingQuantity},
+            {"timestamp", execution.timestamp}
+        };
+        broadcast(envelopeToJson("execution", execution.sequence, execution.symbol, std::move(payload)).dump());
+    }
+
+    void MarketDataPublisher::onSimulationState(const SimulationStateEvent& state) {
+        broadcast(helpers::simStateEnvelope(state));
     }
 
     void MarketDataPublisher::broadcast(std::string message) {

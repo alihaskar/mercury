@@ -10,11 +10,10 @@
 #include "TradeWriter.h"
 #include "RiskManager.h"
 #include "PnLTracker.h"
+#include "MarketRuntime.h"
 #include "ServerApp.h"
 #include "ThreadPool.h"
 #include "AsyncWriter.h"
-#include "StrategyDemo.h"
-#include "BacktestDemo.h"
 
 // Helper function to convert ExecutionStatus to string
 std::string statusToString(Mercury::ExecutionStatus status) {
@@ -166,17 +165,173 @@ void runDemo() {
     std::cout << "Ask Levels: " << engine.getOrderBook().getAskLevelCount() << "\n";
 }
 
+std::vector<std::string> collectPositionalArgs(int argc, char* argv[]) {
+    std::vector<std::string> positionalArgs;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--replay" || arg == "--replay-speed" ||
+            arg == "--sim-speed" || arg == "--sim-seed" ||
+            arg == "--sim-volatility" || arg == "--mm-count" ||
+            arg == "--mom-count" || arg == "--mr-count" ||
+            arg == "--sim-duration-ms" || arg == "--replay-loop-pause" ||
+            arg == "--port" || arg == "--host" || arg == "--symbol") {
+            if (i + 1 < argc) {
+                ++i;
+            }
+            continue;
+        }
+
+        if (!arg.empty() && arg[0] != '-') {
+            positionalArgs.push_back(arg);
+        }
+    }
+
+    return positionalArgs;
+}
+
+void applyLegacySimulationScenario(const std::vector<std::string>& positionalArgs,
+                                   bool runStrategies,
+                                   bool runBacktest,
+                                   Mercury::ServerOptions& serverOptions) {
+    serverOptions.simulation.enabled = true;
+    serverOptions.simulation.headless = true;
+    serverOptions.simulation.clockMode = Mercury::SimulationClockMode::Accelerated;
+    if (serverOptions.simulation.speed <= 1.0) {
+        serverOptions.simulation.speed = 25.0;
+    }
+
+    if (runStrategies) {
+        serverOptions.simulation.volatility = Mercury::SimulationVolatilityPreset::Normal;
+        serverOptions.simulation.marketMakerCount = std::max<size_t>(serverOptions.simulation.marketMakerCount, 2);
+        serverOptions.simulation.momentumCount = std::max<size_t>(serverOptions.simulation.momentumCount, 1);
+        serverOptions.simulation.meanReversionCount = std::max<size_t>(serverOptions.simulation.meanReversionCount, 1);
+        serverOptions.simulation.headlessDurationMs =
+            std::max<uint64_t>(serverOptions.simulation.headlessDurationMs, 15000);
+        return;
+    }
+
+    if (!runBacktest) {
+        return;
+    }
+
+    const std::string scenario = positionalArgs.empty() ? "default" : positionalArgs.front();
+    serverOptions.simulation.headlessDurationMs =
+        std::max<uint64_t>(serverOptions.simulation.headlessDurationMs, 30000);
+    serverOptions.simulation.speed = std::max(50.0, serverOptions.simulation.speed);
+
+    if (scenario == "mm" || scenario == "marketmaking") {
+        serverOptions.simulation.volatility = Mercury::SimulationVolatilityPreset::Low;
+        serverOptions.simulation.marketMakerCount = std::max<size_t>(serverOptions.simulation.marketMakerCount, 3);
+        serverOptions.simulation.momentumCount = std::min<size_t>(serverOptions.simulation.momentumCount, 1);
+        serverOptions.simulation.meanReversionCount = std::max<size_t>(serverOptions.simulation.meanReversionCount, 2);
+    } else if (scenario == "momentum" || scenario == "mom") {
+        serverOptions.simulation.volatility = Mercury::SimulationVolatilityPreset::High;
+        serverOptions.simulation.marketMakerCount = std::max<size_t>(serverOptions.simulation.marketMakerCount, 1);
+        serverOptions.simulation.momentumCount = std::max<size_t>(serverOptions.simulation.momentumCount, 4);
+        serverOptions.simulation.meanReversionCount = std::max<size_t>(serverOptions.simulation.meanReversionCount, 1);
+    } else if (scenario == "multi" || scenario == "compare" || scenario == "comparison") {
+        serverOptions.simulation.volatility = Mercury::SimulationVolatilityPreset::Normal;
+        serverOptions.simulation.marketMakerCount = std::max<size_t>(serverOptions.simulation.marketMakerCount, 2);
+        serverOptions.simulation.momentumCount = std::max<size_t>(serverOptions.simulation.momentumCount, 2);
+        serverOptions.simulation.meanReversionCount = std::max<size_t>(serverOptions.simulation.meanReversionCount, 2);
+    } else if (scenario == "stress") {
+        serverOptions.simulation.volatility = Mercury::SimulationVolatilityPreset::High;
+        serverOptions.simulation.marketMakerCount = std::max<size_t>(serverOptions.simulation.marketMakerCount, 1);
+        serverOptions.simulation.momentumCount = std::max<size_t>(serverOptions.simulation.momentumCount, 5);
+        serverOptions.simulation.meanReversionCount = std::max<size_t>(serverOptions.simulation.meanReversionCount, 1);
+    }
+}
+
+int runHeadlessSimulation(const Mercury::ServerOptions& options) {
+    Mercury::SimulationConfig config = options.simulation;
+    config.enabled = true;
+    config.headless = true;
+
+    Mercury::MarketRuntime runtime(options.symbol, config);
+    runtime.start();
+
+    if (options.replayFile) {
+        if (!runtime.startReplay(*options.replayFile, options.replaySpeed,
+                                 options.replayLoop, options.replayLoopPauseMs)) {
+            std::cerr << "Failed to start replay from " << *options.replayFile << "\n";
+            runtime.stop();
+            return 1;
+        }
+    }
+
+    const uint64_t targetSimTime = std::max<uint64_t>(1000, config.headlessDurationMs);
+    while (runtime.isRunning()) {
+        auto state = runtime.getState();
+        if (state.simulationTimestamp >= targetSimTime) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    const auto summary = runtime.getHeadlessSummary();
+    runtime.stopReplay();
+    runtime.stop();
+
+    std::cout << "\n========================================\n";
+    std::cout << "   Mercury Headless Simulation\n";
+    std::cout << "========================================\n";
+    std::cout << "Sim Time:      " << summary.simulationTimestamp << " ms\n";
+    std::cout << "Trades:        " << summary.tradeCount << "\n";
+    std::cout << "Volume:        " << summary.totalVolume << "\n";
+    std::cout << "Orders in Book:" << summary.orderCount << "\n";
+    std::cout << "Mid Price:     " << summary.lastMidPrice << "\n";
+    std::cout << "Realized Vol:  " << std::fixed << std::setprecision(2)
+              << summary.realizedVolatilityBps << " bps\n";
+    std::cout << "Avg Spread:    " << std::fixed << std::setprecision(2)
+              << summary.averageSpread << "\n";
+    std::cout << "========================================\n";
+
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     std::cout << "Initializing Mercury Trading Engine...\n";
     std::cout << "Hardware concurrency: " << std::thread::hardware_concurrency() << " threads\n";
 
     Mercury::ServerOptions serverOptions;
     bool runServerModeFlag = false;
+    bool headlessSimulation = false;
+    bool runStrategies = false;
+    bool runBacktest = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--server") {
             runServerModeFlag = true;
+        } else if (arg == "--strategies" || arg == "-s") {
+            runStrategies = true;
+        } else if (arg == "--backtest" || arg == "-b") {
+            runBacktest = true;
+        } else if (arg == "--sim") {
+            serverOptions.simulation.enabled = true;
+        } else if (arg == "--headless") {
+            headlessSimulation = true;
+            serverOptions.simulation.enabled = true;
+            serverOptions.simulation.headless = true;
+            serverOptions.simulation.clockMode = Mercury::SimulationClockMode::Accelerated;
+        } else if (arg == "--sim-speed" && i + 1 < argc) {
+            serverOptions.simulation.speed = std::stod(argv[++i]);
+            serverOptions.simulation.clockMode = serverOptions.simulation.speed > 1.0
+                ? Mercury::SimulationClockMode::Accelerated
+                : Mercury::SimulationClockMode::Realtime;
+        } else if (arg == "--sim-seed" && i + 1 < argc) {
+            serverOptions.simulation.seed = static_cast<uint32_t>(std::stoul(argv[++i]));
+        } else if (arg == "--sim-volatility" && i + 1 < argc) {
+            serverOptions.simulation.volatility =
+                Mercury::simulationVolatilityFromString(argv[++i]);
+        } else if (arg == "--mm-count" && i + 1 < argc) {
+            serverOptions.simulation.marketMakerCount = static_cast<size_t>(std::stoull(argv[++i]));
+        } else if (arg == "--mom-count" && i + 1 < argc) {
+            serverOptions.simulation.momentumCount = static_cast<size_t>(std::stoull(argv[++i]));
+        } else if (arg == "--mr-count" && i + 1 < argc) {
+            serverOptions.simulation.meanReversionCount = static_cast<size_t>(std::stoull(argv[++i]));
+        } else if (arg == "--sim-duration-ms" && i + 1 < argc) {
+            serverOptions.simulation.headlessDurationMs = static_cast<uint64_t>(std::stoull(argv[++i]));
         } else if (arg == "--replay" && i + 1 < argc) {
             serverOptions.replayFile = argv[++i];
         } else if (arg == "--replay-speed" && i + 1 < argc) {
@@ -198,6 +353,20 @@ int main(int argc, char* argv[]) {
         return Mercury::runServer(serverOptions);
     }
 
+    const auto positionalArgs = collectPositionalArgs(argc, argv);
+
+    if (runStrategies || runBacktest) {
+        applyLegacySimulationScenario(positionalArgs, runStrategies, runBacktest, serverOptions);
+        std::cout << "Routing legacy "
+                  << (runStrategies ? "--strategies" : "--backtest")
+                  << " through the unified market runtime.\n";
+        return runHeadlessSimulation(serverOptions);
+    }
+
+    if (serverOptions.simulation.enabled || headlessSimulation) {
+        return runHeadlessSimulation(serverOptions);
+    }
+
     // Create the matching engine
     Mercury::MatchingEngine engine;
 
@@ -208,23 +377,24 @@ int main(int argc, char* argv[]) {
         bool useConcurrency = false;
         bool useAsyncWriters = false;
         
-        bool runStrategies = false;
-        bool runBacktest = false;
-        
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
             if (arg == "--concurrent" || arg == "-c") {
                 useConcurrency = true;
             } else if (arg == "--async-io" || arg == "-a") {
                 useAsyncWriters = true;
-            } else if (arg == "--strategies" || arg == "-s") {
-                runStrategies = true;
-            } else if (arg == "--backtest" || arg == "-b") {
-                runBacktest = true;
             } else if (arg == "--server" || arg == "--replay" || arg == "--replay-speed" ||
+                       arg == "--sim" || arg == "--headless" || arg == "--sim-speed" ||
+                       arg == "--sim-seed" || arg == "--sim-volatility" ||
+                       arg == "--mm-count" || arg == "--mom-count" || arg == "--mr-count" ||
+                       arg == "--sim-duration-ms" ||
                        arg == "--replay-loop" || arg == "--replay-loop-pause" ||
                        arg == "--port" || arg == "--host" || arg == "--symbol") {
                 if ((arg == "--replay" || arg == "--replay-speed" ||
+                     arg == "--sim-speed" || arg == "--sim-seed" ||
+                     arg == "--sim-volatility" || arg == "--mm-count" ||
+                     arg == "--mom-count" || arg == "--mr-count" ||
+                     arg == "--sim-duration-ms" ||
                      arg == "--replay-loop-pause" || arg == "--port" ||
                      arg == "--host" || arg == "--symbol") && i + 1 < argc) {
                     ++i;
@@ -232,36 +402,6 @@ int main(int argc, char* argv[]) {
             } else if (arg[0] != '-') {
                 positionalArgs.push_back(arg);
             }
-        }
-        
-        // If strategies flag is set, run strategy demos
-        if (runStrategies) {
-            Mercury::runAllStrategyDemos();
-            return 0;
-        }
-        
-        // If backtest flag is set, run backtest demos
-        if (runBacktest) {
-            // Check if specific backtest requested
-            if (positionalArgs.empty()) {
-                Mercury::runAllBacktestDemos();
-            } else {
-                std::string backtestType = positionalArgs[0];
-                if (backtestType == "mm" || backtestType == "marketmaking") {
-                    Mercury::runMarketMakingBacktest();
-                } else if (backtestType == "momentum" || backtestType == "mom") {
-                    Mercury::runMomentumBacktest();
-                } else if (backtestType == "multi") {
-                    Mercury::runMultiStrategyBacktest();
-                } else if (backtestType == "compare" || backtestType == "comparison") {
-                    Mercury::runMarketConditionComparison();
-                } else if (backtestType == "stress") {
-                    Mercury::runStressBacktest();
-                } else {
-                    Mercury::runAllBacktestDemos();
-                }
-            }
-            return 0;
         }
         
         if (positionalArgs.empty()) {
@@ -645,6 +785,15 @@ int main(int argc, char* argv[]) {
         std::cout << "  --concurrent, -c   Enable concurrent parsing and post-trade processing\n";
         std::cout << "  --async-io, -a     Enable asynchronous I/O writers\n";
         std::cout << "  --server           Run the localhost HTTP/WebSocket server\n";
+        std::cout << "  --sim              Enable the living simulation runtime\n";
+        std::cout << "  --headless         Run the simulation headlessly (accelerated)\n";
+        std::cout << "  --sim-speed <x>    Simulation speed multiplier\n";
+        std::cout << "  --sim-seed <n>     RNG seed for deterministic runs\n";
+        std::cout << "  --sim-volatility <low|normal|high>  Simulation volatility preset\n";
+        std::cout << "  --mm-count <n>     Passive market maker count\n";
+        std::cout << "  --mom-count <n>    Aggressive momentum trader count\n";
+        std::cout << "  --mr-count <n>     Mean-reversion bot count\n";
+        std::cout << "  --sim-duration-ms <ms>  Headless simulation duration (default 30000)\n";
         std::cout << "  --replay <file>    Feed a replay CSV into server mode\n";
         std::cout << "  --replay-speed <x> Replay speed multiplier for server mode\n";
         std::cout << "  --replay-loop      Loop the replay file continuously\n";
@@ -652,8 +801,8 @@ int main(int argc, char* argv[]) {
         std::cout << "  --port <port>      Server port (default: 9001)\n";
         std::cout << "  --host <host>      Server host (default: 127.0.0.1)\n";
         std::cout << "  --symbol <name>    API-level symbol label for server mode\n";
-        std::cout << "  --strategies, -s   Run trading strategy demos\n";
-        std::cout << "  --backtest, -b     Run backtesting demos\n\n";
+        std::cout << "  --strategies, -s   Route legacy strategy demos through the unified runtime\n";
+        std::cout << "  --backtest, -b     Route legacy backtests through the unified runtime\n\n";
         std::cout << "Backtest modes (use with --backtest):\n";
         std::cout << "  mercury --backtest              Run all backtest demos\n";
         std::cout << "  mercury --backtest mm           Market making backtest\n";

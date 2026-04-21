@@ -169,6 +169,7 @@ set(MERCURY_CORE_SOURCES
     src/RiskManager.cpp
     src/PnLTracker.cpp
     src/EngineService.cpp
+    src/MarketRuntime.cpp
 )
 
 # Add the main executable
@@ -226,6 +227,7 @@ set(MERCURY_HEADERS
     include/BacktestDemo.h
     include/MarketData.h
     include/MarketDataPublisher.h
+    include/MarketRuntime.h
     include/EngineService.h
     include/ServerApp.h
     include/ServerHelpers.h
@@ -247,6 +249,7 @@ add_executable(mercury_tests
     tests/risk_manager_test.cpp
     tests/pnl_tracker_test.cpp
     tests/concurrency_test.cpp
+    tests/simulation_runtime_test.cpp
     tests/strategy_test.cpp
 )
 

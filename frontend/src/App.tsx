@@ -3,6 +3,7 @@ import { MidPriceChart } from './components/mid-price-chart'
 import { OrderBookLadder } from './components/order-book-ladder'
 import { OrderEntryForm } from './components/order-entry-form'
 import { PnLCard } from './components/pnl-card'
+import { SimulationControls } from './components/simulation-controls'
 import { StatsStrip } from './components/stats-strip'
 import { StatusBar } from './components/status-bar'
 import { SystemHealth } from './components/system-health'
@@ -29,6 +30,7 @@ function App() {
         <div className="flex min-h-0 flex-col gap-1.5">
           <OrderEntryForm />
           <PnLCard />
+          <SimulationControls />
           <SystemHealth />
         </div>
 

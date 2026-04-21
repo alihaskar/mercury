@@ -104,6 +104,34 @@ namespace Mercury {
         uint64_t timestamp = 0;
     };
 
+    struct ExecutionEvent {
+        uint64_t sequence = 0;
+        std::string symbol;
+        uint64_t orderId = 0;
+        ExecutionStatus status = ExecutionStatus::Rejected;
+        RejectReason rejectReason = RejectReason::None;
+        uint64_t filledQuantity = 0;
+        uint64_t remainingQuantity = 0;
+        uint64_t timestamp = 0;
+    };
+
+    struct SimulationStateEvent {
+        uint64_t sequence = 0;
+        std::string symbol;
+        bool enabled = false;
+        bool running = false;
+        bool paused = false;
+        std::string clockMode;
+        double speed = 1.0;
+        std::string volatility;
+        uint64_t simulationTimestamp = 0;
+        size_t marketMakerCount = 0;
+        size_t momentumCount = 0;
+        size_t meanReversionCount = 0;
+        double realizedVolatilityBps = 0.0;
+        double averageSpread = 0.0;
+    };
+
     class MarketDataSink {
     public:
         virtual ~MarketDataSink() = default;
@@ -112,6 +140,8 @@ namespace Mercury {
         virtual void onTradeEvent(const TradeEvent& trade) = 0;
         virtual void onStatsEvent(const StatsEvent& stats) = 0;
         virtual void onPnLEvent(const PnLEvent& pnl) = 0;
+        virtual void onExecutionEvent(const ExecutionEvent& /*execution*/) {}
+        virtual void onSimulationState(const SimulationStateEvent& /*state*/) {}
     };
 
 }
